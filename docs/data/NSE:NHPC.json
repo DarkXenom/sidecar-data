@@ -1,1 +1,1 @@
-{"as_of": "2025-11-11T19:43+05:30", "symbol": "NHPC", "exchange": "NSE", "mode_top": {"day": ["squeeze"], "swing": ["squeeze"]}, "pool": {"squeeze": {"color": "blue", "detail": "Squeeze (BB low)", "score": 70}}}
+{"as_of": "2025-11-11T20:28+05:30", "symbol": "NHPC", "exchange": "NSE", "mode_top": {"day": ["post_mortem"], "swing": ["post_mortem"]}, "pool": {"post_mortem": {"color": "amber", "detail": "All quiet; no Phase-A chip today", "score": 20}}}

@@ -1,1 +1,1 @@
-{"as_of": "2025-11-11T19:43+05:30", "symbol": "IDFCFIRSTB", "exchange": "NSE", "mode_top": {"day": ["near_52w"], "swing": ["near_52w"]}, "pool": {"near_52w": {"color": "green", "detail": "Near 52W high (≤2%)", "score": 62}}}
+{"as_of": "2025-11-11T20:28+05:30", "symbol": "IDFCFIRSTB", "exchange": "NSE", "mode_top": {"day": ["post_mortem"], "swing": ["post_mortem"]}, "pool": {"post_mortem": {"color": "amber", "detail": "All quiet; no Phase-A chip today", "score": 20}}}
