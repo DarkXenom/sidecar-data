@@ -1,1 +1,1 @@
-{"as_of": "2025-11-11T19:43+05:30", "symbol": "GATECH", "exchange": "NSE", "mode_top": {"day": ["bulk_heat"], "swing": ["bulk_heat"]}, "pool": {"bulk_heat": {"color": "blue", "detail": "6 deals (30d)", "score": 50}}}
+{"as_of": "2025-11-12T16:48+05:30", "symbol": "GATECH", "exchange": "NSE", "mode_top": {"day": ["nr7", "bulk_heat"], "swing": ["nr7", "bulk_heat"]}, "pool": {"nr7": {"color": "blue", "detail": "NR7 (range contraction)", "score": 60}, "bulk_heat": {"color": "blue", "detail": "4 deals (30d)", "score": 50}}}
