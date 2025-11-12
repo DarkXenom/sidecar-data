@@ -1,15 +1,15 @@
 // ==UserScript==
 // @name         Sidecar HUD (StakeLens)
 // @namespace    https://darkxenom.github.io/sidecar-data
-// @version      0.4.1
+// @version      0.4.2            // <-- bump this each time you change the script
 // @description  Insight-first, 4-chip HUD on broker pages with restriction badges.
 // @match        https://kite.zerodha.com/*
 // @match        https://web.dhan.co/*
 // @match        https://trade.angelone.in/*
 // @run-at       document-idle
 // @grant        none
-// @downloadURL  https://darkxenom.github.io/sidecar-data/docs/sidecar.user.js
-// @updateURL    https://darkxenom.github.io/sidecar-data/docs/sidecar.user.js
+// @downloadURL  https://raw.githubusercontent.com/darkxenom/sidecar-data/main/docs/sidecar.user.js
+// @updateURL    https://raw.githubusercontent.com/darkxenom/sidecar-data/main/docs/sidecar.user.js
 // ==/UserScript==
 
 (function () {
