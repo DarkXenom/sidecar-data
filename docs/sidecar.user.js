@@ -33,7 +33,17 @@
     /[?&]exchange=(NSE|BSE)[^#&]*[?&]tradingsymbol=([A-Z0-9.\-]+)/i
   ];
   function parseSymbolFromPath(){
-    const p = location.pathname + location.search;
+    const p = location.pathname + location.search + location.hash;
+    function parseSymbolFallback(){
+      // Try document.title like "LT – Charts – Kite" or "(LT)" patterns
+      const t = document.title || "";
+      let m = t.match(/\bNSE[:\s]([A-Z0-9.\-]{2,})\b/);
+      if (m) return {ex: "NSE", sym: m[1].toUpperCase()};
+      m = t.match(/\(([A-Z0-9.\-]{2,})\)/);
+      if (m) return {ex: "NSE", sym: m[1].toUpperCase()};
+      return null;
+    }
+
     for(const re of PATTERNS){
       const m=p.match(re); if(!m) continue;
       if(re===PATTERNS[2]) return {ex:m[2].toUpperCase(), sym:m[3].toUpperCase()};
@@ -227,7 +237,13 @@
         const c=document.getElementById('sidecar-hud'); if(c) c.remove(); lastKey=''; return;
       }
       await new Promise(r=>setTimeout(r,600));
-      const s=parseSymbolFromPath(); if(!s) return;
+      let s = parseSymbolFromPath();
+      if(!s) s = parseSymbolFallback();
+      if(!s) { // still nothing? clear stale HUD
+        const c=document.getElementById('sidecar-hud'); if(c){ c.querySelector('#sc-row').innerHTML=''; c.querySelector('#sc-verdict').textContent='Sidecar: no symbol'; }
+        return;
+      }
+
 
       const key=`${s.ex}:${s.sym}`;
       if(key===lastKey){
@@ -236,7 +252,13 @@
       }
       lastKey=key;
 
-      const j=await fetchJSON(s.ex, s.sym); if(!j){ dockBR(); return; }
+      const j = await fetchJSON(s.ex, s.sym);
+      if(!j){
+        render([], [], `Sidecar: no data for ${s.ex}:${s.sym}`);
+        dockBR();
+        return;
+      }
+
 
       let chips=mapApplicableChips(j);
       const slip=computeSlippageFromDOM(); if(slip) chips.splice(Math.min(2,chips.length),0,slip);
@@ -252,8 +274,6 @@
     }
   }
 
-  // Watch SPA route changes
-  let hrefLast=location.href;
-  setInterval(()=>{ if(location.href!==hrefLast){ hrefLast=location.href; renderForRoute(); } }, 700);
-  renderForRoute();
-})();
+  // Fire periodically too (covers SPA instrument switches without href change)
+  setInterval(()=>{ renderForRoute(); }, 1500);
+
