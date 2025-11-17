@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Sidecar HUD (StakeLens)
 // @namespace    https://darkxenom.github.io/sidecar-data
-// @version      0.4.2            // <-- bump this each time you change the script
-// @description  Insight-first, 4-chip HUD on broker pages with restriction badges.
-// @match        https://kite.zerodha.com/*
+// @version      0.4.5
+// @description  Insight-first, 4-chip HUD on broker pages with restriction badges + raw toggle.
+// @match        https://*.zerodha.com/*
 // @match        https://web.dhan.co/*
 // @match        https://trade.angelone.in/*
 // @run-at       document-idle
@@ -15,265 +15,314 @@
 (function () {
   'use strict';
 
-  // NEW domain wired
   const DATA_BASE = 'https://darkxenom.github.io/sidecar-data/data/';
   const MODE_KEY = 'sidecar_mode';
   const PREF_COMPACT = 'sidecar_compact';
   if (!localStorage.getItem(MODE_KEY)) localStorage.setItem(MODE_KEY, 'swing');
 
-  const CACHE=new Map(); let lastKey='';
+  const CACHE = new Map();
+  let lastKey = '';
+  let rendering = false;
 
-  // --- Route parsing (quote + chart) ---
+  // ---------- Route parsing (quote + chart) ----------
   const HOST = location.hostname;
   const PATTERNS = [
-    /\/quote\/(NSE|BSE)\/([A-Z0-9.\-]+)/i,
-    /\/markets\/chart\/web\/ciq\/(NSE|BSE)\/([A-Z0-9.\-]+)\//i,
-    /\/(equities|stocks)\/(NSE|BSE)\/([A-Z0-9.\-]+)/i,
-    /\/stocks\/(NSE|BSE)\/([A-Z0-9.\-]+)/i,
-    /[?&]exchange=(NSE|BSE)[^#&]*[?&]tradingsymbol=([A-Z0-9.\-]+)/i
+    // Zerodha: quote
+    /\/quote\/(NSE|BSE)\/([A-Z0-9.\-]+)/i,                                  // [1]=EX, [2]=SYM
+    // Zerodha: charts (ciq/tv)
+    /\/markets\/chart\/web\/(ciq|tv)\/(NSE|BSE)\/([A-Z0-9.\-]+)\//i,         // [2]=EX, [3]=SYM
+    /\/(ciq|tv)\/(NSE|BSE)\/([A-Z0-9.\-]+)\//i,                              // [2]=EX, [3]=SYM
+    // Dhan
+    /\/(equities|stocks|chart)\/(NSE|BSE)\/([A-Z0-9.\-]+)/i,                 // [2]=EX, [3]=SYM
+    // AngelOne
+    /\/stocks\/(NSE|BSE)\/([A-Z0-9.\-]+)/i,                                  // [1]=EX, [2]=SYM
+    // Query-param style
+    /[?&]exchange=(NSE|BSE)[^#&]*[?&]tradingsymbol=([A-Z0-9.\-]+)/i          // [1]=EX, [2]=SYM
   ];
-  function parseSymbolFromPath(){
-    const p = location.pathname + location.search + location.hash;
-    function parseSymbolFallback(){
-      // Try document.title like "LT – Charts – Kite" or "(LT)" patterns
-      const t = document.title || "";
-      let m = t.match(/\bNSE[:\s]([A-Z0-9.\-]{2,})\b/);
-      if (m) return {ex: "NSE", sym: m[1].toUpperCase()};
-      m = t.match(/\(([A-Z0-9.\-]{2,})\)/);
-      if (m) return {ex: "NSE", sym: m[1].toUpperCase()};
-      return null;
-    }
 
-    for(const re of PATTERNS){
-      const m=p.match(re); if(!m) continue;
-      if(re===PATTERNS[2]) return {ex:m[2].toUpperCase(), sym:m[3].toUpperCase()};
-      return {ex:(m[1]||m[2]).toUpperCase(), sym:(m[2]||m[3]).toUpperCase()};
+  function parseSymbolFromPath() {
+    const p = location.pathname + location.search + location.hash;
+    for (let i = 0; i < PATTERNS.length; i++) {
+      const re = PATTERNS[i];
+      const m = p.match(re);
+      if (!m) continue;
+      switch (i) {
+        case 0: return { ex: m[1].toUpperCase(), sym: m[2].toUpperCase() };
+        case 1:
+        case 2:
+        case 3: return { ex: m[2].toUpperCase(), sym: m[3].toUpperCase() };
+        case 4: return { ex: m[1].toUpperCase(), sym: m[2].toUpperCase() };
+        case 5: return { ex: m[1].toUpperCase(), sym: m[2].toUpperCase() };
+      }
     }
     return null;
   }
-  function isSymbolView(){
-    if(HOST==='kite.zerodha.com') return /\/quote\/|\/markets\/chart\/web\/ciq\//.test(location.pathname);
-    if(HOST==='web.dhan.co') return /\/(equities|stocks)\//.test(location.pathname);
-    if(HOST==='trade.angelone.in') return /\/stocks\//.test(location.pathname);
+
+  function parseSymbolFallback() {
+    const t = document.title || '';
+    let m = t.match(/\b(NSE|BSE)[:\s\-]*([A-Z0-9.\-]{2,})\b/);
+    if (m) return { ex: m[1].toUpperCase(), sym: m[2].toUpperCase() };
+    m = t.match(/\(([A-Z0-9.\-]{2,})\)/);
+    if (m) return { ex: 'NSE', sym: m[1].toUpperCase() };
+    return null;
+  }
+
+  function isSymbolView() {
+    if (HOST.includes('zerodha.com')) return /\/quote\/|\/chart|\/ciq|\/tv/.test(location.href);
+    if (HOST === 'web.dhan.co')      return /\/(equities|stocks|chart)\//.test(location.pathname);
+    if (HOST === 'trade.angelone.in')return /\/stocks\//.test(location.pathname);
     return false;
   }
 
-  // --- Fetch ---
-  async function fetchJSON(ex,sym){
-    const key=`${ex}:${sym}`;
-    if(CACHE.has(key)) return CACHE.get(key);
-    try{
-      const r=await fetch(`${DATA_BASE}${encodeURIComponent(ex)}:${encodeURIComponent(sym)}.json`,{cache:'no-store'});
-      if(!r.ok) throw new Error('HTTP '+r.status);
-      const j=await r.json(); CACHE.set(key,j); return j;
-    }catch(e){ console.warn('Sidecar HUD: fetch failed',e); return null; }
-  }
-
-  // --- Chip normalization (Phase-A + forward-compat) ---
-  function normChip(key, p){
-    if(!p) return null;
-    const d=(p.detail||'').trim(); if(!d) return null;
-    const obj = (color,label)=>({key, color: (p.color||color||'blue'), label: (label||d)});
-
-    // Phase-A chips
-    if(key==='squeeze')      return obj('blue',  d);        // "Squeeze (BB low)"
-    if(key==='nr7')          return obj('blue',  d);        // "NR7 (range contraction)"
-    if(key==='hi55_recent')  return obj('green', d);        // "55D high in last week"
-    if(key==='near_52w')     return obj('green', d);        // "Near 52W high (≤2%)"
-    if(key==='bulk_heat'){                                   // "Bulk deals N (30d)"
-      const m=d.toLowerCase().match(/(\d+)\s+deals/);
-      if(m && parseInt(m[1],10)>=2) return obj('blue', d);
+  // ---------- Fetch ----------
+  async function fetchJSON(ex, sym) {
+    const key = `${ex}:${sym}`;
+    if (CACHE.has(key)) return CACHE.get(key);
+    try {
+      const r = await fetch(`${DATA_BASE}${encodeURIComponent(ex)}:${encodeURIComponent(sym)}.json`, { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      CACHE.set(key, j);
+      return j;
+    } catch (e) {
+      console.warn('Sidecar HUD: fetch failed', e);
       return null;
     }
-    if(key==='post_mortem')  return obj('amber', d);
-
-    // Advanced chips (when you re-enable later)
-    const dl=d.toLowerCase();
-    if(key==='earnings'){ if(/in\s*\d+\s*d|today|tomorrow/.test(dl)) return obj('amber', d); return null; }
-    if(key==='egs'){ const m=dl.match(/(low|medium|high)\s+(\d+(\.\d+)?)%/); if(m) return obj(m[1]==='high'?'amber':'blue', `Earnings gap ${m[1]} ${m[2]}%`.replace(/^e/,'E')); return null; }
-    if(key==='accum'){ const m=dl.match(/(\d)\/5d.*?(\d+(\.\d+)?)×/); if(m && parseFloat(m[2])>=1.5) return obj('amber', d); return null; }
-    if(key==='rod'){ const m=dl.match(/(\d+(\.\d+)?)×/); if(m && parseFloat(m[1])>=1.5) return obj('blue', d); return null; }
-    if(key==='insider_net'){ if(!/^\+?₹?0/.test(dl)) return obj('green', `Insider net ${d}`); return null; }
-    if(key==='pledge_delta'){ const mm=dl.match(/([+\-]?\d+(\.\d+)?)\s*pp/); if(mm && Math.abs(parseFloat(mm[1]))>=0.5) return obj('amber', d); return null; }
-
-    // Fallback
-    return obj(p.color||'blue', d);
   }
 
-  function mapApplicableChips(json){
-    const mode = localStorage.getItem(MODE_KEY)||'swing';
+  // ---------- Chip normalization (Phase-A + fwd compat) ----------
+  function normChip(key, p) {
+    if (!p) return null;
+    const d = (p.detail || '').trim();
+    if (!d) return null;
+    const obj = (color, label) => ({ key, color: (p.color || color || 'blue'), label: (label || d) });
+
+    // Phase-A
+    if (key === 'squeeze')     return obj('blue',  d); // "Squeeze (BB low)"
+    if (key === 'nr7')         return obj('blue',  d); // "NR7 (range contraction)"
+    if (key === 'hi55_recent') return obj('green', d); // "55D high in last week"
+    if (key === 'near_52w')    return obj('green', d); // "Near 52W high (≤2%)"
+    if (key === 'bulk_heat') {
+      const m = d.toLowerCase().match(/(\d+)\s+deals/);
+      if (m && parseInt(m[1], 10) >= 2) return obj('blue', d);
+      return null;
+    }
+    if (key === 'post_mortem') return obj('amber', d);
+
+    // Advanced (future)
+    const dl = d.toLowerCase();
+    if (key === 'earnings') { if (/in\s*\d+\s*d|today|tomorrow/.test(dl)) return obj('amber', d); return null; }
+    if (key === 'egs')      { const m = dl.match(/(low|medium|high)\s+(\d+(\.\d+)?)%/); if (m) return obj(m[1] === 'high' ? 'amber' : 'blue', `Earnings gap ${m[1]} ${m[2]}%`.replace(/^e/, 'E')); return null; }
+    if (key === 'accum')    { const m = dl.match(/(\d)\/5d.*?(\d+(\.\d+)?)×/); if (m && parseFloat(m[2]) >= 1.5) return obj('amber', d); return null; }
+    if (key === 'rod')      { const m = dl.match(/(\d+(\.\d+)?)×/); if (m && parseFloat(m[1]) >= 1.5) return obj('blue', d); return null; }
+    if (key === 'insider_net') { if (!/^\+?₹?0/.test(dl)) return obj('green', `Insider net ${d}`); return null; }
+    if (key === 'pledge_delta'){ const mm = dl.match(/([+\-]?\d+(\.\d+)?)\s*pp/); if (mm && Math.abs(parseFloat(mm[1])) >= 0.5) return obj('amber', d); return null; }
+
+    // Fallback (don’t silently drop unknown keys)
+    return obj(p.color || 'blue', d);
+  }
+
+  function mapApplicableChips(json) {
+    const mode = localStorage.getItem(MODE_KEY) || 'swing';
     const keys = (json.mode_top && json.mode_top[mode]) || [];
-    const out=[]; keys.forEach(k=>{
+    const out = [];
+    keys.forEach(k => {
       const c = normChip(k, json.pool && json.pool[k]);
-      if(c) out.push(c);
+      if (c) out.push(c);
     });
     return out;
   }
 
-  // --- Badges (optional, shown if present) ---
-  function extractBadges(json){
+  // ---------- Badges ----------
+  function extractBadges(json) {
     const b = (json.pool && json.pool.badges) || {};
-    const pills=[];
-    if(b.t2t) pills.push('T2T');
-    if(b.asm && String(b.asm).toLowerCase()!=='none') pills.push(`ASM${b.asm===true?'':b.asm}`);
-    if(b.fo_ban) pills.push('F&O ban');
+    const pills = [];
+    if (b.t2t) pills.push('T2T');
+    if (b.asm && String(b.asm).toLowerCase() !== 'none') pills.push(`ASM${b.asm === true ? '' : b.asm}`);
+    if (b.fo_ban) pills.push('F&O ban');
     return pills;
   }
 
-  // --- Slippage (execution friction) ---
-  function computeSlippageFromDOM(){
-    const txt=document.body.innerText||'';
-    const bid=parseFloat((txt.match(/Bid\s*([\d,]*\.?\d+)/i)||[])[1]?.replace(/,/g,'')); 
-    const ask=parseFloat((txt.match(/Ask\s*([\d,]*\.?\d+)/i)||[])[1]?.replace(/,/g,'')); 
-    if(bid && ask && ask>bid){
-      const pct=((ask-bid)/((ask+bid)/2))*100;
-      if(pct>=0.30) return {key:'slippage', color:'amber', label:`Slippage ${pct.toFixed(2)}%`};
+  // ---------- Slippage (execution friction) ----------
+  function computeSlippageFromDOM() {
+    const txt = document.body.innerText || '';
+    const bid = parseFloat((txt.match(/Bid\s*([\d,]*\.?\d+)/i) || [])[1]?.replace(/,/g, ''));
+    const ask = parseFloat((txt.match(/Ask\s*([\d,]*\.?\d+)/i) || [])[1]?.replace(/,/g, ''));
+    if (bid && ask && ask > bid) {
+      const pct = ((ask - bid) / ((ask + bid) / 2)) * 100;
+      if (pct >= 0.30) return { key: 'slippage', color: 'amber', label: `Slippage ${pct.toFixed(2)}%` };
     }
     return null;
   }
 
-  // --- Verdict sentence ---
-  function verdict(chips, badges){
-    if(!chips.length){
-      const mode=localStorage.getItem(MODE_KEY)||'swing';
-      const base = mode==='day'
+  // ---------- Verdict ----------
+  function verdict(chips, badges) {
+    if (!chips.length) {
+      const mode = localStorage.getItem(MODE_KEY) || 'swing';
+      const base = mode === 'day'
         ? 'All clear: No near-term events in the next 3 sessions.'
         : 'All clear: No near-term events in the next 5 sessions.';
       return badges.length ? `${base} • ${badges.join(' · ')}` : base;
     }
-    const hasRed=chips.some(c=>c.color==='red');
-    const hasAmber=chips.some(c=>c.color==='amber');
-    const head=hasRed?'Caution':hasAmber?'Heads-up':'All clear';
+    const hasRed = chips.some(c => c.color === 'red');
+    const hasAmber = chips.some(c => c.color === 'amber');
+    const head = hasRed ? 'Caution' : hasAmber ? 'Heads-up' : 'All clear';
 
-    const ph=[];
-    for(const c of chips.slice(0,4)){
-      const t=c.label||'';
-      if(/Slippage/.test(t)) ph.push(`Expect ${t.toLowerCase()}`);
+    const ph = [];
+    for (const c of chips.slice(0, 4)) {
+      const t = c.label || '';
+      if (/Slippage/.test(t)) ph.push(`Expect ${t.toLowerCase()}`);
       else ph.push(t);
     }
     const line = `${head}: ${ph.join(' • ')}`;
     return badges.length ? `${line} • ${badges.join(' · ')}` : line;
   }
 
-  // --- UI (glass, badges, docking) ---
-  function colorHex(c){ if(c==='red')return'#e5484d'; if(c==='amber')return'#f59e0b'; if(c==='blue')return'#3b82f6'; if(c==='green')return'#22c55e'; return'#9ca3af'; }
+  // ---------- UI (glass, badges, docking) ----------
+  function colorHex(c) {
+    if (c === 'red') return '#e5484d';
+    if (c === 'amber') return '#f59e0b';
+    if (c === 'blue') return '#3b82f6';
+    if (c === 'green') return '#22c55e';
+    return '#9ca3af';
+  }
 
-  function ensureCard(){
-    let card=document.getElementById('sidecar-hud'); if(card) return card;
-    const compact = localStorage.getItem(PREF_COMPACT)==='1';
-    card=document.createElement('div'); card.id='sidecar-hud';
-    card.style.cssText=`
+  function ensureCard() {
+    let card = document.getElementById('sidecar-hud'); if (card) return card;
+    const compact = localStorage.getItem(PREF_COMPACT) === '1';
+    card = document.createElement('div'); card.id = 'sidecar-hud';
+    card.style.cssText = `
       position:fixed; z-index:2147483647;
       backdrop-filter: blur(14px) saturate(130%); -webkit-backdrop-filter: blur(14px) saturate(130%);
       background: rgba(20,22,28,.55); border:1px solid rgba(255,255,255,.18);
-      color:#fff; padding:${compact?'8px 10px':'12px 14px'}; border-radius:16px;
+      color:#fff; padding:${compact ? '8px 10px' : '12px 14px'}; border-radius:16px;
       box-shadow:0 12px 32px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.06);
-      font:${compact?'11px':'12px'}/1.35 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;
-      max-width:${compact?'430px':'560px'};
+      font:${compact ? '11px' : '12px'}/1.35 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu;
+      max-width:${compact ? '430px' : '560px'};
     `;
-    card.innerHTML=`
+    card.innerHTML = `
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <div id="sc-verdict" style="font-weight:800"></div>
       </div>
       <div id="sc-badges" style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 8px"></div>
       <div id="sc-row" style="display:flex;gap:8px;flex-wrap:wrap"></div>
       <div style="opacity:.8;margin-top:8px;font-size:11px;display:flex;gap:12px;align-items:center">
-        <span>Mode: <b id="sc-mode">${localStorage.getItem(MODE_KEY)||'swing'}</b></span>
+        <span>Mode: <b id="sc-mode">${localStorage.getItem(MODE_KEY) || 'swing'}</b></span>
         <span style="cursor:pointer;color:#a5d8ff" id="sc-toggle">toggle</span>
-        <span style="cursor:pointer;color:#a5d8ff" id="sc-compact">${compact?'expand':'compact'}</span>
+        <span style="cursor:pointer;color:#a5d8ff" id="sc-compact">${compact ? 'expand' : 'compact'}</span>
+        <span style="cursor:pointer;color:#a5d8ff" id="sc-raw">raw</span>
       </div>`;
     document.body.appendChild(card);
-    card.querySelector('#sc-toggle').onclick=()=>{const cur=localStorage.getItem(MODE_KEY)||'swing';const next=cur==='swing'?'day':'swing';localStorage.setItem(MODE_KEY,next);location.reload();};
-    card.querySelector('#sc-compact').onclick=()=>{const cur=localStorage.getItem(PREF_COMPACT)==='1';localStorage.setItem(PREF_COMPACT,cur?'0':'1');location.reload();};
+
+    card.querySelector('#sc-toggle').onclick = () => {
+      const cur = localStorage.getItem(MODE_KEY) || 'swing';
+      const next = cur === 'swing' ? 'day' : 'swing';
+      localStorage.setItem(MODE_KEY, next);
+      location.reload();
+    };
+    card.querySelector('#sc-compact').onclick = () => {
+      const cur = localStorage.getItem(PREF_COMPACT) === '1';
+      localStorage.setItem(PREF_COMPACT, cur ? '0' : '1');
+      location.reload();
+    };
+    card.querySelector('#sc-raw').onclick = async () => {
+      const s = parseSymbolFromPath() || parseSymbolFallback();
+      if (!s) { alert('No symbol detected'); return; }
+      const j = await fetchJSON(s.ex, s.sym);
+      if (!j) { alert('No data for ' + s.ex + ':' + s.sym); return; }
+      const p = j.pool || {};
+      const fields = [
+        ['BB_Bandwidth', (p.squeeze ? 'low (squeeze)' : 'normal')],
+        ['NR7', (p.nr7 ? 'yes' : 'no')],
+        ['55D High Recent', (p.hi55_recent ? 'yes' : 'no')],
+        ['Near 52W', (p.near_52w ? '≤2%' : 'no')],
+        ['Bulk/Block (30d)', (p.bulk_heat ? p.bulk_heat.detail : '0')]
+      ];
+      alert(`RAW — ${s.ex}:${s.sym}\n` + fields.map(([k, v]) => `${k}: ${v}`).join('\n'));
+    };
     return card;
   }
 
-  function render(chips, badges, vtext){
-    const card=ensureCard();
-    card.querySelector('#sc-verdict').textContent=vtext||'Sidecar';
-    const badgeWrap=card.querySelector('#sc-badges'); badgeWrap.innerHTML='';
-    badges.forEach(b=>{
-      const pill=document.createElement('span');
-      pill.style.cssText='background:#0e1524;border:1px solid rgba(255,255,255,.18);padding:2px 8px;border-radius:999px;font-weight:700;color:#bfe0ff';
-      pill.textContent=b; badgeWrap.appendChild(pill);
+  function render(chips, badges, vtext) {
+    const card = ensureCard();
+    card.querySelector('#sc-verdict').textContent = vtext || 'Sidecar';
+    const badgeWrap = card.querySelector('#sc-badges'); badgeWrap.innerHTML = '';
+    badges.forEach(b => {
+      const pill = document.createElement('span');
+      pill.style.cssText = 'background:#0e1524;border:1px solid rgba(255,255,255,.18);padding:2px 8px;border-radius:999px;font-weight:700;color:#bfe0ff';
+      pill.textContent = b; badgeWrap.appendChild(pill);
     });
-    const row=card.querySelector('#sc-row'); row.innerHTML='';
-    chips.slice(0,4).forEach(c=>{
-      const chip=document.createElement('span');
-      chip.style.cssText=`
+    const row = card.querySelector('#sc-row'); row.innerHTML = '';
+    chips.slice(0, 4).forEach(c => {
+      const chip = document.createElement('span');
+      chip.style.cssText = `
         background:${colorHex(c.color)}; color:#0b0f14; padding:6px 10px;
         border-radius:999px; font-weight:800; box-shadow:0 1px 0 rgba(255,255,255,.35) inset;
       `;
-      chip.textContent=c.label||''; row.appendChild(chip);
+      chip.textContent = c.label || ''; row.appendChild(chip);
     });
   }
 
-  function findAnchor(){
-    const btns=Array.from(document.querySelectorAll('button, a, div[role="button"]'));
-    return btns.find(b=>{
-      const t=(b.innerText||'').trim().toLowerCase(); if(!t) return false;
-      const match=/\b(buy|sell|trade)\b/.test(t);
-      const r=b.getBoundingClientRect();
-      const visible=r.width>40&&r.height>20&&r.bottom>0&&r.top<(window.innerHeight+200);
-      return match&&visible;
-    })||null;
+  function findAnchor() {
+    const btns = Array.from(document.querySelectorAll('button, a, div[role="button"]'));
+    return btns.find(b => {
+      const t = (b.innerText || '').trim().toLowerCase(); if (!t) return false;
+      const match = /\b(buy|sell|trade)\b/.test(t);
+      const r = b.getBoundingClientRect();
+      const visible = r.width > 40 && r.height > 20 && r.bottom > 0 && r.top < (window.innerHeight + 200);
+      return match && visible;
+    }) || null;
   }
-  function dockNear(el){
-    const card=ensureCard(); const rect=el.getBoundingClientRect();
-    const x=Math.min(rect.right+12, window.innerWidth-card.offsetWidth-16);
-    const y=Math.max(16, rect.top+window.scrollY-10);
-    card.style.left=`${x}px`; card.style.top=`${y}px`; card.style.right='auto'; card.style.bottom='auto';
+  function dockNear(el) {
+    const card = ensureCard(); const rect = el.getBoundingClientRect();
+    const x = Math.min(rect.right + 12, window.innerWidth - card.offsetWidth - 16);
+    const y = Math.max(16, rect.top + window.scrollY - 10);
+    card.style.left = `${x}px`; card.style.top = `${y}px`; card.style.right = 'auto'; card.style.bottom = 'auto';
   }
-  function dockBR(){
-    const card=ensureCard(); card.style.right='16px'; card.style.bottom='16px'; card.style.left='auto'; card.style.top='auto';
+  function dockBR() {
+    const card = ensureCard(); card.style.right = '16px'; card.style.bottom = '16px'; card.style.left = 'auto'; card.style.top = 'auto';
   }
 
-  // --- Render loop for current route ---
-  let rendering=false;
-  async function renderForRoute(){
-    if(rendering) return; rendering=true;
-    try{
-      if(!isSymbolView()){
-        const c=document.getElementById('sidecar-hud'); if(c) c.remove(); lastKey=''; return;
+  // ---------- Render loop ----------
+  async function renderForRoute() {
+    if (rendering) return; rendering = true;
+    try {
+      if (!isSymbolView()) {
+        const c = document.getElementById('sidecar-hud'); if (c) c.remove(); lastKey = ''; return;
       }
-      await new Promise(r=>setTimeout(r,600));
+      await new Promise(r => setTimeout(r, 600));
+
       let s = parseSymbolFromPath();
-      if(!s) s = parseSymbolFallback();
-      if(!s) { // still nothing? clear stale HUD
-        const c=document.getElementById('sidecar-hud'); if(c){ c.querySelector('#sc-row').innerHTML=''; c.querySelector('#sc-verdict').textContent='Sidecar: no symbol'; }
+      if (!s) s = parseSymbolFallback();
+      if (!s) { render([], [], 'Sidecar: open a symbol page'); return; }
+
+      const key = `${s.ex}:${s.sym}`;
+      if (key === lastKey) {
+        const a = findAnchor(); if (a) dockNear(a); else dockBR();
         return;
       }
-
-
-      const key=`${s.ex}:${s.sym}`;
-      if(key===lastKey){
-        const a=findAnchor(); if(a) dockNear(a); else dockBR();
-        return;
-      }
-      lastKey=key;
+      lastKey = key;
 
       const j = await fetchJSON(s.ex, s.sym);
-      if(!j){
-        render([], [], `Sidecar: no data for ${s.ex}:${s.sym}`);
-        dockBR();
-        return;
-      }
+      if (!j) { render([], [], `Sidecar: no data for ${s.ex}:${s.sym}`); dockBR(); return; }
 
+      let chips = mapApplicableChips(j);
+      const slip = computeSlippageFromDOM(); if (slip) chips.splice(Math.min(2, chips.length), 0, slip);
+      chips = chips.slice(0, 4);
 
-      let chips=mapApplicableChips(j);
-      const slip=computeSlippageFromDOM(); if(slip) chips.splice(Math.min(2,chips.length),0,slip);
-      chips=chips.slice(0,4);
-
-      const badges=extractBadges(j);
-      const vtext=verdict(chips, badges);
+      const badges = extractBadges(j);
+      const vtext = verdict(chips, badges);
       render(chips, badges, vtext);
 
-      const a=findAnchor(); if(a) dockNear(a); else dockBR();
+      const a = findAnchor(); if (a) dockNear(a); else dockBR();
     } finally {
-      rendering=false;
+      rendering = false;
     }
   }
 
-  // Fire periodically too (covers SPA instrument switches without href change)
-  setInterval(()=>{ renderForRoute(); }, 1500);
-
+  // Watch URL changes and also refresh periodically (SPA-safe)
+  let hrefLast = location.href;
+  setInterval(() => { if (location.href !== hrefLast) { hrefLast = location.href; renderForRoute(); } }, 700);
+  setInterval(() => { renderForRoute(); }, 1500);
+  renderForRoute();
+})();
