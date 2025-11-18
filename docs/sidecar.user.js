@@ -72,7 +72,7 @@
     const ciqIdx = parts.findIndex(x => x.toLowerCase() === "ciq");
     if (ciqIdx !== -1 && parts.length >= ciqIdx + 3) {
       const ex  = (parts[ciqIdx + 1] || "NSE").toUpperCase();
-      const sym = (parts[ciqIdx + 2] || "").toUpperCase().replace(/[^A-Z0-9.:-]/g,"");
+      const sym = (parts[ciqIdx + 2] || "").toUpperCase().replace(/[^A-Z0-9.\-:&]/g,"");
       if (ex && sym) return { ex, sym };
     }
     const qIdx = parts.findIndex(x => x.toLowerCase() === "quote");
