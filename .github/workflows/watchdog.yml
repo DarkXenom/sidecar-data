@@ -27,37 +27,81 @@ jobs:
           set -euo pipefail
           URL="https://darkxenom.github.io/sidecar-data/heartbeat.json?ts=$(date +%s)"
           JSON="$(curl -fsSL "$URL" || echo '{}')"
-
-          # Extract ISO timestamp (supports "when" or "as_of")
           VAL="$(printf '%s' "$JSON" | jq -r '.when // .as_of // ""')"
-
           if [ -z "$VAL" ] || ! TS=$(date -d "$VAL" +%s 2>/dev/null); then
             AGE_MIN=999999
           else
             NOW=$(date -u +%s)
             AGE_MIN=$(( (NOW - TS) / 60 ))
           fi
-
           echo "age_min=${AGE_MIN}"
           echo "age_min=${AGE_MIN}" >> "$GITHUB_OUTPUT"
-          if [ "${AGE_MIN}" -gt 1200 ]; then   # > 20 hours = stale
+          if [ "${AGE_MIN}" -gt 1200 ]; then
             echo "stale=true"  >> "$GITHUB_OUTPUT"
           else
             echo "stale=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Trigger build (self) if stale
+      - name: Discover default branch & workflow id
+        if: steps.age.outputs.stale == 'true'
+        id: meta
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          OWNER_REPO="${GITHUB_REPOSITORY}"
+
+          # Default branch
+          curl -sS -H "Authorization: Bearer ${GH_TOKEN}" \
+               -H "Accept: application/vnd.github+json" \
+               "https://api.github.com/repos/${OWNER_REPO}" > /tmp/repo.json
+          DEFBR=$(jq -r '.default_branch' /tmp/repo.json)
+          echo "Default branch: ${DEFBR}"
+          echo "default_branch=${DEFBR}" >> "$GITHUB_OUTPUT"
+
+          # List workflows
+          curl -sS -H "Authorization: Bearer ${GH_TOKEN}" \
+               -H "Accept: application/vnd.github+json" \
+               "https://api.github.com/repos/${OWNER_REPO}/actions/workflows" > /tmp/wfs.json
+          echo "Workflows:"
+          jq -r '.workflows[] | "\(.id)  \(.name)  \(.path)"' /tmp/wfs.json || true
+
+          # Try to match the known path; change this if your file is named differently
+          PATH_MATCH=".github/workflows/build.yml"
+          WF_ID=$(jq -r --arg p "$PATH_MATCH" '.workflows[] | select(.path==$p) | .id' /tmp/wfs.json)
+
+          # Fallback: match by name (case-insensitive contains 'Build Sidecar')
+          if [ -z "${WF_ID}" ] || [ "${WF_ID}" = "null" ]; then
+            WF_ID=$(jq -r '.workflows[] | select(.name|test("Build Sidecar";"i")) | .id' /tmp/wfs.json)
+          fi
+
+          # Final fallback: first workflow in the list
+          if [ -z "${WF_ID}" ] || [ "${WF_ID}" = "null" ]; then
+            WF_ID=$(jq -r '.workflows[0].id' /tmp/wfs.json)
+          fi
+
+          if [ -z "${WF_ID}" ] || [ "${WF_ID}" = "null" ]; then
+            echo "ERROR: No workflow found in ${OWNER_REPO}. Check file name/path and branch." >&2
+            exit 1
+          fi
+
+          echo "wf_id=${WF_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger build by id (on default branch)
         if: steps.age.outputs.stale == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          echo "Dispatching build.yml on ref=main ..."
+          OWNER_REPO="${GITHUB_REPOSITORY}"
+          WF_ID="${{ steps.meta.outputs.wf_id }}"
+          REF="${{ steps.meta.outputs.default_branch }}"
+          echo "Dispatching workflow id=${WF_ID} on ref=${REF} ..."
           RESP=$(curl -sS -w "\n%{http_code}\n" -o /tmp/resp.json \
-            -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${GH_TOKEN}" \
-            -X POST "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/build.yml/dispatches" \
-            -d '{"ref":"main"}')
+            -H "Accept: application/vnd.github+json" \
+            -X POST "https://api.github.com/repos/${OWNER_REPO}/actions/workflows/${WF_ID}/dispatches" \
+            -d "{\"ref\":\"${REF}\"}")
           CODE=$(tail -n1 <<< "$RESP")
           echo "HTTP ${CODE}"
           echo "Response body:"; cat /tmp/resp.json || true
