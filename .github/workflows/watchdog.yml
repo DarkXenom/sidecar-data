@@ -1,0 +1,65 @@
+name: Sidecar Watchdog (self-heal)
+
+on:
+  schedule:
+    - cron: "0 * * * *"    # hourly
+  workflow_dispatch: {}
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  check-and-heal:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure jq is available
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -y
+            sudo apt-get install -y jq
+          fi
+
+      - name: Check heartbeat age
+        id: age
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="https://darkxenom.github.io/sidecar-data/heartbeat.json?ts=$(date +%s)"
+          JSON="$(curl -fsSL "$URL" || echo '{}')"
+
+          # Extract ISO timestamp (supports "when" or "as_of")
+          VAL="$(printf '%s' "$JSON" | jq -r '.when // .as_of // ""')"
+
+          if [ -z "$VAL" ] || ! TS=$(date -d "$VAL" +%s 2>/dev/null); then
+            AGE_MIN=999999
+          else
+            NOW=$(date -u +%s)
+            AGE_MIN=$(( (NOW - TS) / 60 ))
+          fi
+
+          echo "age_min=${AGE_MIN}"
+          echo "age_min=${AGE_MIN}" >> "$GITHUB_OUTPUT"
+          if [ "${AGE_MIN}" -gt 1200 ]; then   # > 20 hours = stale
+            echo "stale=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Trigger build (self) if stale
+        if: steps.age.outputs.stale == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "Dispatching build.yml on ref=main ..."
+          RESP=$(curl -sS -w "\n%{http_code}\n" -o /tmp/resp.json \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -X POST "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/build.yml/dispatches" \
+            -d '{"ref":"main"}')
+          CODE=$(tail -n1 <<< "$RESP")
+          echo "HTTP ${CODE}"
+          echo "Response body:"; cat /tmp/resp.json || true
+          [ "${CODE}" -eq 204 ] || { echo "Dispatch failed"; exit 1; }
+          echo "Dispatch OK."
