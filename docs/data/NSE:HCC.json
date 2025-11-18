@@ -1,1 +1,1 @@
-{"as_of": "2025-11-12T16:48+05:30", "symbol": "HCC", "exchange": "NSE", "mode_top": {"day": ["nr7"], "swing": ["nr7"]}, "pool": {"nr7": {"color": "blue", "detail": "NR7 (range contraction)", "score": 60}}}
+{"as_of": "2025-11-18T13:51+05:30", "symbol": "HCC", "exchange": "NSE", "mode_top": {"day": ["post_mortem"], "swing": ["post_mortem"]}, "pool": {"post_mortem": {"color": "amber", "detail": "All quiet; no Phase-A chip today", "score": 20}}}

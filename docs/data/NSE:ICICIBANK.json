@@ -1,1 +1,1 @@
-{"as_of": "2025-11-11T19:43+05:30", "symbol": "ICICIBANK", "exchange": "NSE", "mode_top": {"day": ["bulk_heat"], "swing": ["bulk_heat"]}, "pool": {"bulk_heat": {"color": "blue", "detail": "2 deals (30d)", "score": 50}}}
+{"as_of": "2025-11-18T13:51+05:30", "symbol": "ICICIBANK", "exchange": "NSE", "mode_top": {"day": ["squeeze"], "swing": ["squeeze"]}, "pool": {"squeeze": {"color": "blue", "detail": "Squeeze (BB low)", "score": 70}}}
