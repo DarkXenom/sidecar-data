@@ -52,8 +52,19 @@ jobs:
           PIPE_PAT: ${{ secrets.SIDECAR_PAT }}
         run: |
           set -euo pipefail
-          curl -sS -X POST \
+          echo "Dispatching Sidecar-pipeline/build.yml on ref=main ..."
+          RESP=$(curl -sS -w "\n%{http_code}\n" -o /tmp/resp.json \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${PIPE_PAT}" \
-            https://api.github.com/repos/DarkXenom/Sidecar-pipeline/actions/workflows/build.yml/dispatches \
-            -d '{"ref":"main"}'
+            -X POST "https://api.github.com/repos/DarkXenom/Sidecar-pipeline/actions/workflows/build.yml/dispatches" \
+            -d '{"ref":"main"}')
+          CODE=$(tail -n1 <<< "$RESP")
+          echo "HTTP ${CODE}"
+          echo "Response body:"
+          cat /tmp/resp.json || true
+          # Success is 204 No Content
+          if [ "${CODE}" -ne 204 ]; then
+            echo "Dispatch failed (HTTP ${CODE}). Check PAT scopes, repo name, workflow filename/branch." >&2
+            exit 1
+          fi
+          echo "Dispatch OK."
