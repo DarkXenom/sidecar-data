@@ -16,37 +16,47 @@ jobs:
         run: |
           set -euo pipefail
           URL="https://darkxenom.github.io/sidecar-data/heartbeat.json?ts=$(date +%s)"
-          JSON="$(curl -fsSL "$URL" || echo '')"
-          if [ -z "$JSON" ]; then
-            echo "age_min=100000" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          WHEN=$(python - <<'PY'
-import json,sys,datetime
-j=json.loads(sys.stdin.read())
-s=j.get("when") or j.get("as_of") or ""
+          JSON="$(curl -fsSL "$URL" || echo '{}')"
+
+          WHEN_MIN=$(
+            python - "$JSON" <<'PY'
+import json, sys, datetime as dt
 try:
-  # Parse "2025-11-12T16:48+05:30"
-  dt=datetime.datetime.fromisoformat(s)
-except:
-  print(999999); raise SystemExit
-now=datetime.datetime.now(datetime.timezone.utc)
-if not dt.tzinfo: # assume IST if tz missing
-  ist=datetime.timezone(datetime.timedelta(hours=5,minutes=30))
-  dt=dt.replace(tzinfo=ist)
-age_min=int((now - dt.astimezone(datetime.timezone.utc)).total_seconds()//60)
+    j = json.loads(sys.argv[1])
+except Exception:
+    print(999999); raise SystemExit
+
+s = (j.get("when") or j.get("as_of") or "").strip()
+try:
+    # handles "2025-11-12T16:48+05:30"
+    t = dt.datetime.fromisoformat(s)
+except Exception:
+    print(999999); raise SystemExit
+
+now = dt.datetime.now(dt.timezone.utc)
+if t.tzinfo is None:
+    ist = dt.timezone(dt.timedelta(hours=5, minutes=30))
+    t = t.replace(tzinfo=ist)
+
+age_min = int((now - t.astimezone(dt.timezone.utc)).total_seconds() // 60)
 print(age_min)
 PY
-<<<"$JSON") || true
-          echo "age_min=${WHEN:-999999}" >> "$GITHUB_OUTPUT"
+          )
+
+          echo "age_min=${WHEN_MIN}" >> "$GITHUB_OUTPUT"
+          if [ "${WHEN_MIN}" -gt 1200 ]; then   # > 20 hours
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Trigger pipeline if stale (> 20 hours)
-        if: steps.age.outputs.age_min != '' && fromJSON(steps.age.outputs.age_min) > 1200
+        if: steps.age.outputs.stale == 'true'
         env:
           PIPE_PAT: ${{ secrets.SIDECAR_PAT }}
         run: |
           set -euo pipefail
-          curl -X POST \
+          curl -sS -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${PIPE_PAT}" \
             https://api.github.com/repos/DarkXenom/Sidecar-pipeline/actions/workflows/build.yml/dispatches \
