@@ -1,1 +1,1 @@
-{"as_of": "2025-11-18T15:30+05:30", "symbol": "CUMMINSIND", "exchange": "NSE", "mode_top": {"day": ["hi55_recent", "near_52w"], "swing": ["hi55_recent", "near_52w"]}, "pool": {"hi55_recent": {"color": "green", "detail": "55D high in last week", "score": 65}, "near_52w": {"color": "green", "detail": "Near 52W high (≤2%)", "score": 62}}}
+{"as_of": "2025-11-18T17:39+05:30", "symbol": "CUMMINSIND", "exchange": "NSE", "mode_top": {"day": ["hi55_recent"], "swing": ["hi55_recent"]}, "pool": {"hi55_recent": {"color": "green", "detail": "55D high in last week", "score": 65}}}
