@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         StakeLens Sidecar HUD (v1.2)
+// @name         StakeLens Sidecar HUD (v1.3)
 // @namespace    https://darkxenom.github.io/sidecar-data
 // @match        https://kite.zerodha.com/*
 // @match        https://web.dhan.co/*
@@ -18,6 +18,12 @@
     subtext: "#94A3B8",
     accent: "#22D3EE",
     chip: { amber:"#f59e0b", blue:"#3b82f6", green:"#10b981", red:"#ef4444" }
+  };
+
+  // Mode-specific display priority so Day/Swing actually differs even if backend is identical
+  const PRIORITY = {
+    day:   ['nr7','squeeze','bulk_heat','near_52w','hi55_recent','earnings','insider_net','accum','rod','pledge_delta'],
+    swing: ['near_52w','hi55_recent','squeeze','bulk_heat','insider_net','accum','rod','pledge_delta','earnings']
   };
 
   // ---------- Style (bottom-right only) ----------
@@ -71,34 +77,39 @@
     }
     #sl-hud .more { cursor: pointer; font-weight: 600; color: ${THEMES.accent}; }
     #sl-hud .muted { color: ${THEMES.subtext}; }
+    #sl-hud .raw {
+      display:none; margin-top:8px; padding-top:8px; border-top:1px solid ${THEMES.glassBorder};
+      font-size:12.5px; color:${THEMES.subtext};
+    }
+    #sl-hud .raw[data-open="1"]{ display:block; }
+    #sl-hud .raw .row{ display:flex; justify-content:space-between; margin:4px 0; }
+    #sl-hud .raw .k{ opacity:.85; }  #sl-hud .raw .v{ color:${THEMES.text}; }
   `);
 
-  // ---------- URL & Symbol detection (ciq + quote + title fallback) ----------
+  // ---------- URL & Symbol detection ----------
   const onLogin = () => /login|connect/i.test(location.pathname);
 
   function getSymbolFromUrl(){
-    const path = location.pathname;
-    const parts = path.split("/").filter(Boolean);
-
-    // /markets/chart/web/ciq/NSE/BEL/...
+    const parts = location.pathname.split("/").filter(Boolean);
+    // ciq route
     {
       const ciqIdx = parts.findIndex(x => x.toLowerCase() === "ciq");
       if (ciqIdx !== -1 && parts.length >= ciqIdx + 3) {
         const ex  = (parts[ciqIdx + 1] || "NSE").toUpperCase();
-        const sym = (parts[ciqIdx + 2] || "").toUpperCase().replace(/[^A-Z0-9.:-]/g, "");
+        const sym = (parts[ciqIdx + 2] || "").toUpperCase().replace(/[^A-Z0-9.:-]/g,"");
         if (ex && sym) return { ex, sym };
       }
     }
-    // /quote/NSE/BEL
+    // quote route
     {
       const qIdx = parts.findIndex(x => x.toLowerCase() === "quote");
       if (qIdx !== -1 && parts.length >= qIdx + 3) {
         const ex  = (parts[qIdx + 1] || "NSE").toUpperCase();
-        const sym = (parts[qIdx + 2] || "").toUpperCase().replace(/[^A-Z0-9.:-]/g, "");
+        const sym = (parts[qIdx + 2] || "").toUpperCase().replace(/[^A-Z0-9.:-]/g,"");
         if (ex && sym) return { ex, sym };
       }
     }
-    // Fallback: read from title e.g. "BEL - ... - Charts"
+    // title fallback
     const m = document.title.match(/\b(NSE|BSE)[:\s-]*([A-Z0-9.\-]{2,})\b/) || document.title.match(/^([A-Z0-9.\-]{2,})\b.*- Charts/i);
     if (m) {
       const ex  = (m[1] && /^(NSE|BSE)$/i.test(m[1])) ? m[1].toUpperCase() : "NSE";
@@ -122,6 +133,7 @@
     <div class="body">
       <div class="verdict muted">Loading…</div>
       <div class="chips"></div>
+      <div class="raw" id="sl-raw"></div>
       <div class="footer">
         <span class="muted" id="sl-asof"></span>
         <span class="more" id="sl-more">More</span>
@@ -139,23 +151,40 @@
   };
 
   // ---------- Helpers ----------
+  const pick = (obj, key) => (obj && obj[key]) ? obj[key] : null;
+
   function scoreOrder(pool, keys){
     return (keys||[]).map(k => [k, (pool[k]||{}).score||0]).sort((a,b)=>b[1]-a[1]).map(x=>x[0]);
   }
 
-  // Build verdict text (post_mortem intentionally excluded)
+  function rankKeys(pool, mode){
+    const keys = Object.keys(pool||{}).filter(k => k !== "post_mortem");
+    const prio = PRIORITY[mode] || [];
+    // First, any keys that are in our priority list, ordered by that list
+    const inPrio = prio.filter(k => keys.includes(k));
+    // Then, the rest by score
+    const rest = scoreOrder(pool, keys.filter(k => !inPrio.includes(k)));
+    return [...inPrio, ...rest];
+  }
+
   function makeVerdict(data){
     const p = data.pool || {};
-    const lines = [];
-    if (p.earnings)     lines.push(`${p.earnings.detail}. Size positions; expect gap risk.`);
-    if (p.insider_net)  lines.push(`Insiders net ${p.insider_net.detail.replace("(30d)","in 30 days")} — supportive if delivery is rising.`);
-    if (p.pledge_delta) lines.push(`Pledge ${p.pledge_delta.detail} — watch leverage risk.`);
-    if (p.rod)          lines.push(`${p.rod.detail}. Exits may still slip on thin depth.`);
-    if (p.accum)        lines.push(`${p.accum.detail}. Bias: buy first pullback; avoid chasing gaps.`);
-    if (p.bulk_heat)    lines.push(`${p.bulk_heat.detail.replace("(30d)","over 30d")} — institutional activity check.`);
-
-    if (!lines.length)  lines.push(`No near-term catalysts detected. Keep it simple: trade plan first, size second, story last.`);
-    return lines.slice(0,2).join(" ");
+    const top = rankKeys(p, state.mode).slice(0,2);
+    const map = {
+      squeeze:     p.squeeze?.detail,
+      nr7:         p.nr7?.detail,
+      hi55_recent: p.hi55_recent?.detail,
+      near_52w:    p.near_52w?.detail,
+      bulk_heat:   p.bulk_heat?.detail,
+      earnings:    p.earnings?.detail,
+      insider_net: p.insider_net?.detail,
+      accum:       p.accum?.detail,
+      rod:         p.rod?.detail,
+      pledge_delta:p.pledge_delta?.detail
+    };
+    const bits = top.map(k => map[k]).filter(Boolean);
+    if (!bits.length) return "No near-term catalysts detected.";
+    return bits.join(" • ");
   }
 
   function renderChips(data){
@@ -163,8 +192,6 @@
     const chipsEl = hud.querySelector(".chips");
     chipsEl.innerHTML = "";
 
-    // Rank by mode_top if present else score; filter out post_mortem
-    const rank = (data.mode_top && data.mode_top[state.mode]) || scoreOrder(p, Object.keys(p));
     const labels = {
       earnings: "Earnings",
       egs: "Earnings Gap Safety",
@@ -172,10 +199,15 @@
       rod: "Rate of Delivery",
       insider_net: "Insider (30d)",
       pledge_delta: "Pledge Δ30d",
-      bulk_heat: "Bulk/Block Heat"
-      // post_mortem intentionally excluded
+      bulk_heat: "Bulk/Block Heat",
+      hi55_recent: "55D High Recent",
+      near_52w: "Near 52W",
+      squeeze: "Squeeze (BB)",
+      nr7: "NR7"
     };
-    const showKeys = (state.expanded ? rank : rank.slice(0,4)).filter(k => k !== "post_mortem");
+
+    const ordered = rankKeys(p, state.mode);
+    const showKeys = (state.expanded ? ordered : ordered.slice(0,4));
 
     for (const k of showKeys){
       const v = p[k]; if (!v || !v.detail) continue;
@@ -188,6 +220,17 @@
         <div class="bar"></div>`;
       chipsEl.appendChild(chip);
     }
+
+    // Raw panel content (always rebuild so “More” feels richer)
+    const raw = hud.querySelector("#sl-raw");
+    const rows = [];
+    rows.push(['Symbol', `${data.exchange||'NSE'}:${data.symbol||''}`]);
+    rows.push(['As of', (data.as_of||'').replace('T',' ').replace('+05:30',' IST')]);
+    rows.push(['Mode', state.mode.toUpperCase()]);
+    rows.push(['Signals', ordered.join(', ') || 'none']);
+    if (p.bulk_heat?.detail) rows.push(['Deals (30d)', p.bulk_heat.detail]);
+    raw.innerHTML = rows.map(([k,v])=>`<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
+    raw.dataset.open = state.expanded ? "1" : "0";
   }
 
   function setAsOf(s){
@@ -196,7 +239,7 @@
 
   function setVerdict(text){
     const el = hud.querySelector(".verdict");
-    el.textContent = text;
+    el.textContent = text || "—";
     el.classList.toggle("muted", !text || /Loading/i.test(text));
   }
 
@@ -224,8 +267,9 @@
     }
   }
 
-  // ---------- Event wiring ----------
+  // ---------- Events ----------
   function switchMode(mode){
+    if (state.mode === mode) return;
     state.mode = mode;
     hud.querySelectorAll('header .pill[data-mode]').forEach(p=>p.dataset.active = (p.dataset.mode===mode) ? "1":"0");
     if (state.data){
@@ -238,19 +282,19 @@
     hud.querySelector("#sl-more").textContent = state.expanded ? "Less" : "More";
     if (state.data) renderChips(state.data);
   }
-  hud.querySelector('header .pill[data-mode="day"]').addEventListener("click", ()=>switchMode("day"));
-  hud.querySelector('header .pill[data-mode="swing"]').addEventListener("click", ()=>switchMode("swing"));
-  hud.querySelector("#sl-more").addEventListener("click", toggleMore);
+  hud.querySelector('header .pill[data-mode="day"]').addEventListener("click", (e)=>{ e.preventDefault(); e.stopPropagation(); switchMode("day"); });
+  hud.querySelector('header .pill[data-mode="swing"]').addEventListener("click", (e)=>{ e.preventDefault(); e.stopPropagation(); switchMode("swing"); });
+  hud.querySelector("#sl-more").addEventListener("click", (e)=>{ e.preventDefault(); e.stopPropagation(); toggleMore(); });
 
   // Hide on login/connect
-  function hideOnLoginIfNeeded(){ hud.dataset.open = onLogin() ? "0" : hud.dataset.open; }
+  const onLoginTick = () => { if (onLogin()) hud.dataset.open = "0"; };
 
   // Monitor SPA route changes
   const observeUrl = () => {
     const tick = () => {
+      onLoginTick();
       if (state.lastHref !== location.href){
         state.lastHref = location.href;
-        if (onLogin()) { hud.dataset.open = "0"; return; }
         const pair = getSymbolFromUrl();
         if (!pair){ hud.dataset.open = "0"; return; }
         state.ex = pair.ex; state.sym = pair.sym;
