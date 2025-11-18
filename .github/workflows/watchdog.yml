@@ -46,25 +46,67 @@ jobs:
             echo "stale=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Trigger pipeline if stale (> 20 hours)
+      - name: Discover workflow id (build.yml) in Sidecar-pipeline
+        if: steps.age.outputs.stale == 'true'
+        id: wf
+        env:
+          PIPE_PAT: ${{ secrets.SIDECAR_PAT }}
+        run: |
+          set -euo pipefail
+          OWNER="DarkXenom"
+          REPO="Sidecar-pipeline"
+
+          echo "Listing workflows in ${OWNER}/${REPO} ..."
+          curl -sS -H "Accept: application/vnd.github+json" \
+               -H "Authorization: Bearer ${PIPE_PAT}" \
+               "https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows" > /tmp/wfs.json
+
+          echo "Available workflows:"
+          jq -r '.workflows[] | "\(.id)  \(.name)  \(.path)"' /tmp/wfs.json || true
+
+          # 1) Try to match by file path exactly
+          WF_ID=$(jq -r '.workflows[] | select(.path==".github/workflows/build.yml") | .id' /tmp/wfs.json)
+          # 2) Fallback: match by name (shown in your workflow as "Build Sidecar Data (Phase A)")
+          if [ -z "${WF_ID}" ] || [ "${WF_ID}" = "null" ]; then
+            WF_ID=$(jq -r '.workflows[] | select(.name=="Build Sidecar Data (Phase A)") | .id' /tmp/wfs.json)
+          fi
+
+          if [ -z "${WF_ID}" ] || [ "${WF_ID}" = "null" ]; then
+            echo "ERROR: Could not find workflow id (build.yml or named 'Build Sidecar Data (Phase A)') in ${OWNER}/${REPO}." >&2
+            echo "Hint: confirm the filename and the 'name:' in the workflow on the main branch."
+            exit 1
+          fi
+
+          echo "wf_id=${WF_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger pipeline by workflow id (if stale)
         if: steps.age.outputs.stale == 'true'
         env:
           PIPE_PAT: ${{ secrets.SIDECAR_PAT }}
         run: |
           set -euo pipefail
-          echo "Dispatching Sidecar-pipeline/build.yml on ref=main ..."
+          OWNER="DarkXenom"
+          REPO="Sidecar-pipeline"
+          WF_ID="${{ steps.wf.outputs.wf_id }}"
+
+          echo "Dispatching workflow id=${WF_ID} on ref=main ..."
           RESP=$(curl -sS -w "\n%{http_code}\n" -o /tmp/resp.json \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${PIPE_PAT}" \
-            -X POST "https://api.github.com/repos/DarkXenom/Sidecar-pipeline/actions/workflows/build.yml/dispatches" \
+            -X POST "https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/${WF_ID}/dispatches" \
             -d '{"ref":"main"}')
           CODE=$(tail -n1 <<< "$RESP")
           echo "HTTP ${CODE}"
-          echo "Response body:"
-          cat /tmp/resp.json || true
+          echo "Response body:"; cat /tmp/resp.json || true
+
           # Success is 204 No Content
           if [ "${CODE}" -ne 204 ]; then
-            echo "Dispatch failed (HTTP ${CODE}). Check PAT scopes, repo name, workflow filename/branch." >&2
+            echo "Dispatch failed (HTTP ${CODE}). Likely causes:" >&2
+            echo " - Wrong branch (ref) or workflow not on 'main'." >&2
+            echo " - Token lacks Actions/Contents write on ${OWNER}/${REPO}." >&2
+            echo " - Workflow file is named differently or on another path." >&2
             exit 1
           fi
+
           echo "Dispatch OK."
+
