@@ -2,7 +2,7 @@ name: Sidecar Watchdog
 
 on:
   schedule:
-    - cron: "0 * * * *"   # hourly
+    - cron: "0 * * * *"    # hourly
   workflow_dispatch: {}
 
 jobs:
@@ -11,40 +11,38 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Check heartbeat age
         id: age
+        shell: bash
         run: |
           set -euo pipefail
           URL="https://darkxenom.github.io/sidecar-data/heartbeat.json?ts=$(date +%s)"
           JSON="$(curl -fsSL "$URL" || echo '{}')"
 
-          WHEN_MIN=$(
-            python - "$JSON" <<'PY'
-import json, sys, datetime as dt
-try:
-    j = json.loads(sys.argv[1])
-except Exception:
-    print(999999); raise SystemExit
-
+          export HB_JSON="$JSON"
+          AGE_MIN=$(python - <<'PY'
+import os, json, datetime as dt
+j = json.loads(os.environ.get("HB_JSON","{}"))
 s = (j.get("when") or j.get("as_of") or "").strip()
 try:
-    # handles "2025-11-12T16:48+05:30"
     t = dt.datetime.fromisoformat(s)
 except Exception:
     print(999999); raise SystemExit
-
 now = dt.datetime.now(dt.timezone.utc)
 if t.tzinfo is None:
     ist = dt.timezone(dt.timedelta(hours=5, minutes=30))
     t = t.replace(tzinfo=ist)
-
 age_min = int((now - t.astimezone(dt.timezone.utc)).total_seconds() // 60)
 print(age_min)
 PY
-          )
-
-          echo "age_min=${WHEN_MIN}" >> "$GITHUB_OUTPUT"
-          if [ "${WHEN_MIN}" -gt 1200 ]; then   # > 20 hours
+)
+          echo "age_min=${AGE_MIN}" >> "$GITHUB_OUTPUT"
+          if [ "${AGE_MIN}" -gt 1200 ]; then   # > 20 hours
             echo "stale=true" >> "$GITHUB_OUTPUT"
           else
             echo "stale=false" >> "$GITHUB_OUTPUT"
