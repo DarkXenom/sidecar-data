@@ -1,1 +1,1 @@
-{"as_of": "2025-11-20T20:23+05:30", "symbol": "LOWVOL1", "exchange": "NSE", "mode_top": {"day": ["baseline"], "swing": ["baseline"]}, "pool": {"baseline": {"color": "blue", "detail": "No near-term catalysts detected", "score": 10}}}
+{"as_of": "2025-11-21T16:48+05:30", "symbol": "LOWVOL1", "exchange": "NSE", "mode_top": {"day": ["squeeze", "near_52w"], "swing": ["squeeze", "near_52w"]}, "pool": {"squeeze": {"color": "blue", "detail": "Squeeze (BB low)", "score": 70}, "near_52w": {"color": "green", "detail": "Near 52W high (≤2%)", "score": 62}}}
