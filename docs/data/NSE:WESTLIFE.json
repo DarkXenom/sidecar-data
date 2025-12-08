@@ -1,1 +1,1 @@
-{"as_of": "2025-12-07T12:50+05:30", "symbol": "WESTLIFE", "exchange": "NSE", "mode_top": {"day": ["nr7"], "swing": ["nr7"]}, "pool": {"nr7": {"color": "blue", "detail": "NR7 (range contraction)", "score": 60}}}
+{"as_of": "2025-12-08T08:53+05:30", "symbol": "WESTLIFE", "exchange": "NSE", "mode_top": {"day": ["post_mortem"], "swing": ["post_mortem"]}, "pool": {"post_mortem": {"color": "amber", "detail": "All quiet; no Phase-A chip today", "score": 20}}}
